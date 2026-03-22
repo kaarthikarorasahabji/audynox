@@ -6,7 +6,7 @@ const { execFile } = require('child_process');
 
 const app = express();
 const PORT = process.env.PORT || 7860;
-const YT_API_KEY = process.env.YT_API_KEY;
+const YT_API_KEY = process.env.YT_API_KEY || 'AIzaSyARfdd8i0s8Az-weM2gohTBx4Pr6SiGiSo';
 const YT_API_BASE = 'https://www.googleapis.com/youtube/v3';
 const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;

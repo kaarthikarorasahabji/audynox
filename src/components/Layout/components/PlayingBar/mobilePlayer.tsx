@@ -45,7 +45,9 @@ const NowPlayingBarMobile = () => {
 
   useEffect(() => {
     if (currentSong) {
-      getImageAnalysis2(currentSong.album.images[0].url).then((r) => {
+      const imgUrl = currentSong.album?.images?.[0]?.url;
+      if (!imgUrl) return;
+      getImageAnalysis2(imgUrl).then((r) => {
         let color = tinycolor(r);
         while (color.isLight()) {
           color = color.darken(10);

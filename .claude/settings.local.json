@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python deploy_hf.py)",
+      "Bash(python deploy_update_hf.py)",
+      "Bash(pip show:*)",
+      "Bash(python -c \"from huggingface_hub import HfApi; api=HfApi\\(\\); info=api.space_info\\(''''kaarthikdassarora/Audynox''''\\); print\\(''''Status:'''', info.runtime\\); print\\(''''SDK:'''', info.sdk\\)\")",
+      "Bash(python:*)",
+      "Bash(npx react-scripts:*)"
+    ]
+  }
+}

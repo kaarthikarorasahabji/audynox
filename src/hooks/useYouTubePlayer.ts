@@ -47,9 +47,27 @@ export function useYouTubePlayer(onStateChange?: (state: any) => void) {
     if (!audioRef.current) {
       audioRef.current = new Audio();
       audioRef.current.preload = 'auto';
+      // Mobile Safari/Chrome require attributes for background & lock-screen playback
+      audioRef.current.setAttribute('playsinline', 'true');
+      audioRef.current.setAttribute('webkit-playsinline', 'true');
     }
+
+    // Unlock audio on first user gesture (required for mobile browsers)
+    const unlockAudio = () => {
+      const a = audioRef.current;
+      if (a) {
+        a.play().then(() => a.pause()).catch(() => {});
+      }
+      document.removeEventListener('touchstart', unlockAudio);
+      document.removeEventListener('click', unlockAudio);
+    };
+    document.addEventListener('touchstart', unlockAudio, { once: true });
+    document.addEventListener('click', unlockAudio, { once: true });
+
     return () => {
       cancelAnimationFrame(animFrameRef.current);
+      document.removeEventListener('touchstart', unlockAudio);
+      document.removeEventListener('click', unlockAudio);
     };
   }, []);
 

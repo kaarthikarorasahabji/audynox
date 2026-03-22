@@ -51,13 +51,13 @@ function tracksToPlaylist(tracks: Track[], name: string, id: string): Playlist {
 
 export const fetchTrending = createAsyncThunk('home/fetchTrending', async () => {
   try {
-    const tracks = await getTrending(20);
-    // Create mock playlists from trending tracks (groups of 5)
+    const tracks = await searchTracks('latest punjabi songs 2026', 20);
     const playlists: Playlist[] = [];
     for (let i = 0; i < tracks.length; i += 5) {
       const group = tracks.slice(i, i + 5);
       if (group.length > 0) {
-        playlists.push(tracksToPlaylist(group, `Trending ${Math.floor(i / 5) + 1}`, `trending-${i}`));
+        const names = ['Punjabi Hits', 'Desi Vibes', 'Punjabi Fire', 'Fresh Punjabi'];
+        playlists.push(tracksToPlaylist(group, names[Math.floor(i / 5)] || `Punjabi Mix ${Math.floor(i / 5) + 1}`, `trending-${i}`));
       }
     }
     return playlists;
@@ -68,7 +68,7 @@ export const fetchTrending = createAsyncThunk('home/fetchTrending', async () => 
 
 export const fetchTopTracks = createAsyncThunk('home/fetchTopTracks', async () => {
   try {
-    const tracks = await getTrending(10);
+    const tracks = await searchTracks('top punjabi songs 2026 sidhu moose wala ap dhillon', 10);
     return tracks;
   } catch {
     return [];
@@ -77,8 +77,7 @@ export const fetchTopTracks = createAsyncThunk('home/fetchTopTracks', async () =
 
 export const fetchNewReleases = createAsyncThunk('home/fetchNewReleases', async () => {
   try {
-    const tracks = await searchTracks('new music 2025', 10);
-    // Convert tracks to Album-like objects for display
+    const tracks = await searchTracks('new punjabi songs releases 2026', 10);
     const albums: Album[] = tracks.map((t) => t.album).filter(Boolean);
     const seen = new Set<string>();
     return albums.filter((a) => {
@@ -93,8 +92,8 @@ export const fetchNewReleases = createAsyncThunk('home/fetchNewReleases', async 
 
 export const fetchMadeForYou = createAsyncThunk('home/fetchMadeForYou', async () => {
   try {
-    const tracks = await searchTracks('popular music mix', 10);
-    return [tracksToPlaylist(tracks, 'Your Mix', 'made-for-you-1')];
+    const tracks = await searchTracks('punjabi hits mix playlist 2026', 10);
+    return [tracksToPlaylist(tracks, 'Punjabi Mix For You', 'made-for-you-1')];
   } catch {
     return [];
   }
@@ -102,8 +101,8 @@ export const fetchMadeForYou = createAsyncThunk('home/fetchMadeForYou', async ()
 
 export const fetchRanking = createAsyncThunk('home/fetchRanking', async () => {
   try {
-    const tracks = await getTrending(10);
-    return [tracksToPlaylist(tracks, 'Top Charts', 'ranking-1')];
+    const tracks = await searchTracks('top punjabi songs india charts 2026', 10);
+    return [tracksToPlaylist(tracks, 'Punjabi Top Charts', 'ranking-1')];
   } catch {
     return [];
   }
@@ -122,13 +121,21 @@ export const fecthFeaturedPlaylists = createAsyncThunk(
   'home/fecthFeaturedPlaylists',
   async () => {
     try {
-      const tracks = await getTrending(20);
+      const queries = [
+        'bollywood punjabi hits playlist 2026',
+        'punjabi romantic songs 2026',
+        'punjabi bass boosted songs',
+        'punjabi bhangra party songs',
+      ];
       const playlists: Playlist[] = [];
-      for (let i = 0; i < tracks.length; i += 5) {
-        const group = tracks.slice(i, i + 5);
-        if (group.length > 0) {
-          playlists.push(tracksToPlaylist(group, `Featured ${Math.floor(i / 5) + 1}`, `featured-${i}`));
-        }
+      const names = ['Bollywood x Punjabi', 'Punjabi Romance', 'Bass Boosted Punjabi', 'Bhangra Party'];
+      for (let i = 0; i < queries.length; i++) {
+        try {
+          const tracks = await searchTracks(queries[i], 5);
+          if (tracks.length > 0) {
+            playlists.push(tracksToPlaylist(tracks, names[i], `featured-${i}`));
+          }
+        } catch {}
       }
       return playlists;
     } catch {
