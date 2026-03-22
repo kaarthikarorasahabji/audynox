@@ -1,34 +1,23 @@
----
-title: Audynox
-emoji: 🎵
-colorFrom: purple
-colorTo: blue
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 <div align="center">
 
 # 🎵 Audynox
 
-### A Full-Featured Music Streaming App — Powered by JioSaavn & YouTube
+### A Full-Featured Music Streaming App
+**Powered by JioSaavn & YouTube**
 
-[![Live Demo](https://img.shields.io/badge/🚀_Live_Demo-Audynox-1DB954?style=for-the-badge)](https://kaarthikdassarora-audynox.hf.space/)
-[![API](https://img.shields.io/badge/🔌_API-Audynox_API-blue?style=for-the-badge)](https://kaarthikdassarora-audynox-api.hf.space/)
-[![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
+*No Spotify account required. No ads. Ever.*
 
-<br/>
+[![Live Demo](https://img.shields.io/badge/Live_Demo-FF6B6B?style=for-the-badge&logo=vercel&logoColor=white)](https://kaarthikdassarora-audynox.hf.space)
+[![API](https://img.shields.io/badge/API-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://kaarthikdassarora-audynox-api.hf.space)
+[![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://hub.docker.com)
+[![MIT License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
+[![React](https://img.shields.io/badge/React_18-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://reactjs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)](https://typescriptlang.org)
 
-![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white)
-![Redux](https://img.shields.io/badge/Redux_Toolkit-593d88?style=flat-square&logo=redux&logoColor=white)
-![Node.js](https://img.shields.io/badge/Node.js-339933?style=flat-square&logo=node.js&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white)
+---
 
-<br/>
-
-> **No Spotify account required.** Audynox streams music via JioSaavn (320kbps) with YouTube fallback — millions of songs, completely free.
+> *"Spotify kept ruining my gym sessions with ads. So I built my own music app in 1 day."*
+> — **Kaarthik Dass Arora**
 
 </div>
 
@@ -37,63 +26,50 @@ pinned: false
 ## ✨ Features
 
 | Feature | Description |
-|---------|-------------|
-| 🎵 **High-Quality Streaming** | Stream songs up to 320kbps via JioSaavn |
+|:---|:---|
+| 🎵 **High-Quality Streaming** | Stream songs up to **320kbps** via JioSaavn |
 | 🔍 **Smart Search** | Search songs, artists, and albums in real time |
 | 👤 **Artist Pages** | View top tracks, albums, singles, and similar artists |
 | 💿 **Album Views** | Full album details with complete track listings |
-| 📂 **Browse by Genre** | Discover music across Pop, Rock, Hip Hop, K-Pop, Lo-Fi, and more |
+| 📂 **Browse by Genre** | Discover music across Pop, Rock, Hip Hop, K-Pop, Lo-Fi & more |
 | ❤️ **Liked Songs** | Save your favorites locally |
 | 📃 **Playlists** | Create and manage custom playlists |
 | 🎯 **Recommendations** | Get song suggestions based on what you listen to |
 | 🔥 **Trending** | Discover trending tracks on the home page |
 | 🎨 **Splash Animation** | Beautiful animated intro with developer credits |
-| 📱 **Responsive** | Works on desktop and mobile |
+| 📱 **Responsive** | Works perfectly on desktop and mobile |
 | 🌍 **Multi-language** | i18n support |
-
----
-
-## 🖼️ Screenshots
-
-<div align="center">
-<table>
-  <tr>
-    <td><img src="images/Home.png" alt="Home" width="280"/></td>
-    <td><img src="images/search.png" alt="Search" width="280"/></td>
-    <td><img src="images/playlist.png" alt="Playlist" width="280"/></td>
-  </tr>
-  <tr>
-    <td align="center"><b>Home</b></td>
-    <td align="center"><b>Search</b></td>
-    <td align="center"><b>Playlist</b></td>
-  </tr>
-  <tr>
-    <td><img src="images/artist.png" alt="Artist" width="280"/></td>
-    <td><img src="images/Album.png" alt="Album" width="280"/></td>
-    <td><img src="images/Profile.png" alt="Profile" width="280"/></td>
-  </tr>
-  <tr>
-    <td align="center"><b>Artist</b></td>
-    <td align="center"><b>Album</b></td>
-    <td align="center"><b>Profile</b></td>
-  </tr>
-</table>
-</div>
 
 ---
 
 ## 🛠️ Tech Stack
 
-- **Frontend:** React 18, TypeScript, Redux Toolkit, Ant Design, SCSS
-- **Backend:** Node.js, Express, JioSaavn API, youtube-sr, yt-dlp
-- **Deployment:** Docker + Hugging Face Spaces
+**Frontend**
+
+![React](https://img.shields.io/badge/React_18-20232A?style=flat-square&logo=react&logoColor=61DAFB)
+![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=flat-square&logo=typescript&logoColor=white)
+![Redux](https://img.shields.io/badge/Redux_Toolkit-764ABC?style=flat-square&logo=redux&logoColor=white)
+![Ant Design](https://img.shields.io/badge/Ant_Design-0170FE?style=flat-square&logo=antdesign&logoColor=white)
+![SCSS](https://img.shields.io/badge/SCSS-CC6699?style=flat-square&logo=sass&logoColor=white)
+
+**Backend**
+
+![Node.js](https://img.shields.io/badge/Node.js-339933?style=flat-square&logo=nodedotjs&logoColor=white)
+![Express](https://img.shields.io/badge/Express-000000?style=flat-square&logo=express&logoColor=white)
+![JioSaavn](https://img.shields.io/badge/JioSaavn_API-0057A3?style=flat-square&logo=jiosaavn&logoColor=white)
+![yt-dlp](https://img.shields.io/badge/yt--dlp-FF0000?style=flat-square&logo=youtube&logoColor=white)
+
+**Deployment**
+
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white)
+![Hugging Face](https://img.shields.io/badge/Hugging_Face-FFD21E?style=flat-square&logo=huggingface&logoColor=black)
 
 ---
 
 ## 🔌 API Endpoints
 
 | Endpoint | Description |
-|---|---|
+|:---|:---|
 | `GET /api/search?q=&maxResults=20` | Search songs |
 | `GET /api/trending?maxResults=20` | Trending songs |
 | `GET /api/track/:id` | Track metadata |
@@ -116,12 +92,14 @@ pinned: false
 
 ## 🚀 Quick Start
 
+### Local Development
+
 ```bash
 # Clone the repository
 git clone https://github.com/kaarthikarorasahabji/audynox.git
 cd audynox
 
-# Install dependencies
+# Install frontend dependencies
 npm install
 
 # Start frontend dev server
@@ -133,7 +111,7 @@ npm install
 npm start
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Open **http://localhost:3000** in your browser. 🎉
 
 ### Docker
 
@@ -168,19 +146,31 @@ audynox/
 
 Deployed on **Hugging Face Spaces** using Docker:
 
-- **App:** [https://kaarthikdassarora-audynox.hf.space](https://kaarthikdassarora-audynox.hf.space/)
-- **API:** [https://kaarthikdassarora-audynox-api.hf.space](https://kaarthikdassarora-audynox-api.hf.space/)
+| Service | URL |
+|:---|:---|
+| 🎵 App | [kaarthikdassarora-audynox.hf.space](https://kaarthikdassarora-audynox.hf.space) |
+| ⚡ API | [kaarthikdassarora-audynox-api.hf.space](https://kaarthikdassarora-audynox-api.hf.space) |
 
 ---
 
 ## 📝 License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the **MIT License**.
+
+```
+MIT License
+Copyright (c) 2026 Kaarthik Dass Arora
+```
 
 ---
 
 <div align="center">
 
-**Developed by [Kaarthik Dass Arora](https://github.com/kaarthikarorasahabji)**
+**Built with ❤️ and frustration by [Kaarthik Dass Arora](https://github.com/kaarthikarorasahabji)**
+
+[![GitHub](https://img.shields.io/badge/GitHub-kaarthikarorasahabji-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/kaarthikarorasahabji)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-kaarthikdassarora-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/kaarthikdassarora/)
+
+*⭐ Star this repo if you find it useful!*
 
 </div>
