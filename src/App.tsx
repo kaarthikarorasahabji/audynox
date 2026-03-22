@@ -3,7 +3,10 @@ import './styles/App.scss';
 
 // Utils
 import i18next from 'i18next';
-import React, { FC, Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { FC, Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+// Splash Screen
+import SplashScreen from './components/SplashScreen/SplashScreen';
 
 // Components
 import { ConfigProvider } from 'antd';
@@ -260,8 +263,11 @@ const RootComponent = () => {
 };
 
 function App() {
+  const [showSplash, setShowSplash] = useState(true);
+
   return (
     <ConfigProvider theme={{ token: { fontFamily: 'SpotifyMixUI' } }}>
+      {showSplash && <SplashScreen onFinish={() => setShowSplash(false)} />}
       <Provider store={store}>
         <PersistGate loading={null} persistor={persistor}>
           <YouTubePlayerBridge>

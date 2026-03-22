@@ -3,43 +3,11 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const { execFile } = require('child_process');
+const YouTube = require('youtube-sr').default;
 
 const app = express();
 const PORT = process.env.PORT || 7860;
-const YT_API_KEY = process.env.YT_API_KEY || 'AIzaSyARfdd8i0s8Az-weM2gohTBx4Pr6SiGiSo';
-const YT_API_BASE = 'https://www.googleapis.com/youtube/v3';
-const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
-const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
-
-// ---------------------------------------------------------------------------
-// Spotify token cache (Client Credentials flow)
-// ---------------------------------------------------------------------------
-let spotifyToken = null;
-let spotifyTokenExpiry = 0;
-
-async function getSpotifyToken() {
-  if (spotifyToken && Date.now() < spotifyTokenExpiry) return spotifyToken;
-  try {
-    const resp = await axios.post(
-      'https://accounts.spotify.com/api/token',
-      'grant_type=client_credentials',
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Authorization:
-            'Basic ' +
-            Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64'),
-        },
-      }
-    );
-    spotifyToken = resp.data.access_token;
-    spotifyTokenExpiry = Date.now() + (resp.data.expires_in - 60) * 1000;
-    return spotifyToken;
-  } catch (err) {
-    console.error('Spotify token error:', err.response?.data || err.message);
-    return null;
-  }
-}
+const JIOSAAVN_API = 'https://saavn.sumit.co/api';
 
 // ---------------------------------------------------------------------------
 // CORS
@@ -59,10 +27,10 @@ app.use(
 app.use(express.json());
 
 // ---------------------------------------------------------------------------
-// In-memory cache – 30 minute TTL
+// In-memory cache – 10 minute TTL
 // ---------------------------------------------------------------------------
 const cache = new Map();
-const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
 function getCached(key) {
   const entry = cache.get(key);
@@ -79,64 +47,67 @@ function setCached(key, data, ttl = CACHE_TTL) {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: parse ISO 8601 duration to milliseconds
+// Helper: map JioSaavn song → Track-compatible shape
 // ---------------------------------------------------------------------------
-function parseDuration(iso) {
-  if (!iso) return 0;
-  const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
-  if (!match) return 0;
-  const h = parseInt(match[1] || '0', 10);
-  const m = parseInt(match[2] || '0', 10);
-  const s = parseInt(match[3] || '0', 10);
-  return (h * 3600 + m * 60 + s) * 1000;
-}
+function mapJioSaavnSongToTrack(song) {
+  const images = (song.image || []).map((img) => ({
+    url: img.url || img.link || '',
+    width: img.quality === '500x500' ? 500 : img.quality === '150x150' ? 150 : 50,
+    height: img.quality === '500x500' ? 500 : img.quality === '150x150' ? 150 : 50,
+  }));
+  // Use the highest quality image
+  const bestImage = images.length > 0 ? images[images.length - 1] : { url: '', width: 0, height: 0 };
 
-// ---------------------------------------------------------------------------
-// Helper: map YouTube video item → Track-compatible shape
-// ---------------------------------------------------------------------------
-function mapVideoToTrack(video) {
-  const snippet = video.snippet || {};
-  const contentDetails = video.contentDetails || {};
-  const videoId = typeof video.id === 'object' ? video.id.videoId : video.id;
-  const thumbnail =
-    snippet.thumbnails?.high?.url ||
-    snippet.thumbnails?.medium?.url ||
-    snippet.thumbnails?.default?.url ||
-    '';
+  const artists = (song.artists?.primary || song.artists?.all || []).map((a) => ({
+    id: a.id || '',
+    name: a.name || '',
+    type: 'artist',
+    href: '',
+    uri: `jiosaavn:artist:${a.id || ''}`,
+    external_urls: { spotify: '' },
+  }));
+
+  // If no structured artists, fall back to the artist string
+  if (artists.length === 0 && song.artist) {
+    artists.push({
+      id: '',
+      name: song.artist,
+      type: 'artist',
+      href: '',
+      uri: 'jiosaavn:artist:unknown',
+      external_urls: { spotify: '' },
+    });
+  }
+
+  const albumData = song.album || {};
+
+  // Extract download URLs
+  const downloadUrl = song.downloadUrl || [];
 
   return {
-    id: videoId,
-    videoId: videoId,
-    name: snippet.title || '',
-    artists: [
-      {
-        id: snippet.channelId || '',
-        name: snippet.channelTitle || '',
-        type: 'artist',
-        href: '',
-        uri: `youtube:artist:${snippet.channelId || ''}`,
-        external_urls: { spotify: '' },
-      },
-    ],
+    id: song.id || '',
+    videoId: null,
+    name: song.name || song.title || '',
+    artists,
     album: {
-      id: videoId,
-      name: snippet.title || '',
+      id: albumData.id || song.id || '',
+      name: albumData.name || song.album?.name || song.name || '',
       album_type: 'single',
       artists: [],
       available_markets: [],
       external_urls: { spotify: '' },
       href: '',
-      images: [{ url: thumbnail, width: 480, height: 360 }],
-      release_date: snippet.publishedAt ? snippet.publishedAt.split('T')[0] : '',
+      images: images.length > 0 ? images : [bestImage],
+      release_date: song.releaseDate || song.year || '',
       release_date_precision: 'day',
       total_tracks: 1,
       type: 'album',
-      uri: `youtube:album:${videoId}`,
+      uri: `jiosaavn:album:${albumData.id || song.id || ''}`,
     },
     available_markets: [],
     disc_number: 1,
-    duration_ms: parseDuration(contentDetails.duration),
-    explicit: false,
+    duration_ms: (song.duration || 0) * 1000,
+    explicit: song.explicitContent === 1 || song.explicitContent === true,
     external_ids: { isrc: '' },
     external_urls: { spotify: '' },
     href: '',
@@ -146,46 +117,45 @@ function mapVideoToTrack(video) {
     preview_url: '',
     track_number: 1,
     type: 'track',
-    uri: `youtube:track:${videoId}`,
+    uri: `jiosaavn:track:${song.id || ''}`,
+    downloadUrl,
   };
 }
 
 // ---------------------------------------------------------------------------
-// Helper: map YouTube playlist item → Track-compatible shape
+// Helper: map youtube-sr Video → Track-compatible shape (fallback)
 // ---------------------------------------------------------------------------
-function mapPlaylistItemToTrack(item) {
-  const snippet = item.snippet || {};
-  const videoId = snippet.resourceId?.videoId || '';
+function mapYouTubeSrVideoToTrack(video) {
   const thumbnail =
-    snippet.thumbnails?.high?.url ||
-    snippet.thumbnails?.medium?.url ||
-    snippet.thumbnails?.default?.url ||
+    video.thumbnail?.url ||
+    (video.thumbnails && video.thumbnails.length > 0 ? video.thumbnails[video.thumbnails.length - 1].url : '') ||
     '';
+  const videoId = video.id || '';
 
   return {
     id: videoId,
     videoId: videoId,
-    name: snippet.title || '',
+    name: video.title || '',
     artists: [
       {
-        id: snippet.channelId || '',
-        name: snippet.channelTitle || '',
+        id: video.channel?.id || '',
+        name: video.channel?.name || '',
         type: 'artist',
         href: '',
-        uri: `youtube:artist:${snippet.channelId || ''}`,
+        uri: `youtube:artist:${video.channel?.id || ''}`,
         external_urls: { spotify: '' },
       },
     ],
     album: {
       id: videoId,
-      name: snippet.title || '',
+      name: video.title || '',
       album_type: 'single',
       artists: [],
       available_markets: [],
       external_urls: { spotify: '' },
       href: '',
       images: [{ url: thumbnail, width: 480, height: 360 }],
-      release_date: snippet.publishedAt ? snippet.publishedAt.split('T')[0] : '',
+      release_date: video.uploadedAt || '',
       release_date_precision: 'day',
       total_tracks: 1,
       type: 'album',
@@ -193,7 +163,7 @@ function mapPlaylistItemToTrack(item) {
     },
     available_markets: [],
     disc_number: 1,
-    duration_ms: 0,
+    duration_ms: video.duration || 0,
     explicit: false,
     external_ids: { isrc: '' },
     external_urls: { spotify: '' },
@@ -205,6 +175,7 @@ function mapPlaylistItemToTrack(item) {
     track_number: 1,
     type: 'track',
     uri: `youtube:track:${videoId}`,
+    downloadUrl: null,
   };
 }
 
@@ -217,6 +188,7 @@ app.get('/api/health', (_req, res) => {
 
 // ---------------------------------------------------------------------------
 // GET /api/search?q=&maxResults=20
+// Primary: JioSaavn, Fallback: youtube-sr
 // ---------------------------------------------------------------------------
 app.get('/api/search', async (req, res) => {
   try {
@@ -227,49 +199,91 @@ app.get('/api/search', async (req, res) => {
     const cached = getCached(cacheKey);
     if (cached) return res.json(cached);
 
-    // Step 1: search for video IDs
-    const searchResp = await axios.get(`${YT_API_BASE}/search`, {
-      params: {
-        part: 'snippet',
-        q,
-        type: 'video',
-        videoCategoryId: '10',
-        regionCode: 'IN',
-        maxResults: Number(maxResults),
-        key: YT_API_KEY,
-      },
-    });
+    let result = [];
 
-    const videoIds = searchResp.data.items
-      .map((item) => item.id.videoId)
-      .filter(Boolean);
+    // Try JioSaavn first
+    try {
+      const resp = await axios.get(`${JIOSAAVN_API}/search/songs`, {
+        params: { query: q, limit: Number(maxResults) },
+        timeout: 8000,
+      });
 
-    if (videoIds.length === 0) {
-      const result = [];
-      setCached(cacheKey, result);
-      return res.json(result);
+      const songs = resp.data?.data?.results || resp.data?.results || [];
+      if (songs.length > 0) {
+        result = songs.map(mapJioSaavnSongToTrack);
+      }
+    } catch (e) {
+      console.warn('JioSaavn search failed, trying youtube-sr fallback:', e.message);
     }
 
-    // Step 2: get full video details (for duration)
-    const detailsResp = await axios.get(`${YT_API_BASE}/videos`, {
-      params: {
-        part: 'snippet,contentDetails',
-        id: videoIds.join(','),
-        key: YT_API_KEY,
-      },
-    });
+    // Fallback to youtube-sr if JioSaavn returned no results
+    if (result.length === 0) {
+      try {
+        const videos = await YouTube.search(String(q), {
+          type: 'video',
+          limit: Number(maxResults),
+        });
+        result = videos.map(mapYouTubeSrVideoToTrack);
+      } catch (e) {
+        console.error('youtube-sr fallback also failed:', e.message);
+      }
+    }
 
-    const result = detailsResp.data.items.map(mapVideoToTrack);
     setCached(cacheKey, result);
     res.json(result);
   } catch (err) {
-    console.error('Search error:', err.response?.data || err.message);
+    console.error('Search error:', err.message);
     res.status(500).json({ error: 'Search failed' });
   }
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/stream-url/:videoId
+// GET /api/trending?maxResults=20
+// ---------------------------------------------------------------------------
+app.get('/api/trending', async (req, res) => {
+  try {
+    const { maxResults = 20 } = req.query;
+    const cacheKey = `trending:${maxResults}`;
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
+
+    let result = [];
+
+    // Use JioSaavn search for trending songs
+    try {
+      const resp = await axios.get(`${JIOSAAVN_API}/search/songs`, {
+        params: { query: 'trending punjabi songs', limit: Number(maxResults) },
+        timeout: 8000,
+      });
+      const songs = resp.data?.data?.results || resp.data?.results || [];
+      result = songs.map(mapJioSaavnSongToTrack);
+    } catch (e) {
+      console.warn('JioSaavn trending failed:', e.message);
+    }
+
+    // Fallback
+    if (result.length === 0) {
+      try {
+        const videos = await YouTube.search('trending punjabi songs 2026', {
+          type: 'video',
+          limit: Number(maxResults),
+        });
+        result = videos.map(mapYouTubeSrVideoToTrack);
+      } catch (e) {
+        console.error('youtube-sr trending fallback failed:', e.message);
+      }
+    }
+
+    setCached(cacheKey, result);
+    res.json(result);
+  } catch (err) {
+    console.error('Trending error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch trending' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/stream-url/:videoId — kept for YouTube fallback
 // ---------------------------------------------------------------------------
 app.get('/api/stream-url/:videoId', async (req, res) => {
   try {
@@ -311,32 +325,101 @@ app.get('/api/stream-url/:videoId', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/track/:videoId
+// GET /api/track/:id
+// JioSaavn IDs (alphanumeric, ~8 chars) or YouTube videoId (11 chars)
 // ---------------------------------------------------------------------------
-app.get('/api/track/:videoId', async (req, res) => {
+app.get('/api/track/:id', async (req, res) => {
   try {
-    const { videoId } = req.params;
-    const cacheKey = `track:${videoId}`;
+    const { id } = req.params;
+    const cacheKey = `track:${id}`;
     const cached = getCached(cacheKey);
     if (cached) return res.json(cached);
 
-    const resp = await axios.get(`${YT_API_BASE}/videos`, {
-      params: {
-        part: 'snippet,contentDetails',
-        id: videoId,
-        key: YT_API_KEY,
-      },
-    });
+    // Heuristic: YouTube videoIds are exactly 11 chars with base64-like characters
+    const isYouTubeId = /^[a-zA-Z0-9_-]{11}$/.test(id);
 
-    if (!resp.data.items || resp.data.items.length === 0) {
-      return res.status(404).json({ error: 'Video not found' });
+    if (!isYouTubeId) {
+      // Try JioSaavn first
+      try {
+        const resp = await axios.get(`${JIOSAAVN_API}/songs/${id}`, { timeout: 8000 });
+        const songs = resp.data?.data || [resp.data];
+        if (songs.length > 0 && songs[0]?.id) {
+          const result = mapJioSaavnSongToTrack(songs[0]);
+          setCached(cacheKey, result);
+          return res.json(result);
+        }
+      } catch (e) {
+        console.warn('JioSaavn track fetch failed:', e.message);
+      }
     }
 
-    const result = mapVideoToTrack(resp.data.items[0]);
+    // Fallback: YouTube via yt-dlp metadata
+    const url = `https://www.youtube.com/watch?v=${id}`;
+    const result = await new Promise((resolve, reject) => {
+      execFile(
+        'python',
+        ['-m', 'yt_dlp', '--dump-json', '--no-playlist', url],
+        { timeout: 30000 },
+        (err, stdout, stderr) => {
+          if (err) return reject(new Error(stderr || err.message));
+          try {
+            const json = JSON.parse(stdout);
+            resolve({
+              id: json.id,
+              videoId: json.id,
+              name: json.title || '',
+              artists: [
+                {
+                  id: json.channel_id || '',
+                  name: json.channel || json.uploader || '',
+                  type: 'artist',
+                  href: '',
+                  uri: `youtube:artist:${json.channel_id || ''}`,
+                  external_urls: { spotify: '' },
+                },
+              ],
+              album: {
+                id: json.id,
+                name: json.title || '',
+                album_type: 'single',
+                artists: [],
+                available_markets: [],
+                external_urls: { spotify: '' },
+                href: '',
+                images: [{ url: json.thumbnail || '', width: 480, height: 360 }],
+                release_date: json.upload_date || '',
+                release_date_precision: 'day',
+                total_tracks: 1,
+                type: 'album',
+                uri: `youtube:album:${json.id}`,
+              },
+              available_markets: [],
+              disc_number: 1,
+              duration_ms: (json.duration || 0) * 1000,
+              explicit: false,
+              external_ids: { isrc: '' },
+              external_urls: { spotify: '' },
+              href: '',
+              is_local: false,
+              is_playable: true,
+              popularity: 0,
+              preview_url: '',
+              track_number: 1,
+              type: 'track',
+              uri: `youtube:track:${json.id}`,
+              downloadUrl: null,
+            });
+          } catch (parseErr) {
+            reject(new Error('Failed to parse yt-dlp output'));
+          }
+        }
+      );
+    });
+
     setCached(cacheKey, result);
     res.json(result);
   } catch (err) {
-    console.error('Track error:', err.response?.data || err.message);
+    console.error('Track error:', err.message);
     res.status(500).json({ error: 'Failed to fetch track' });
   }
 });
@@ -351,140 +434,69 @@ app.get('/api/playlist/:playlistId', async (req, res) => {
     const cached = getCached(cacheKey);
     if (cached) return res.json(cached);
 
-    // Get playlist metadata
-    const playlistResp = await axios.get(`${YT_API_BASE}/playlists`, {
-      params: {
-        part: 'snippet,contentDetails',
-        id: playlistId,
-        key: YT_API_KEY,
-      },
-    });
-
-    const playlistData = playlistResp.data.items?.[0];
-    if (!playlistData) {
-      return res.status(404).json({ error: 'Playlist not found' });
-    }
-
-    // Get all playlist items with pagination
-    const allItems = [];
-    let nextPageToken = null;
-
-    do {
-      const itemsResp = await axios.get(`${YT_API_BASE}/playlistItems`, {
-        params: {
-          part: 'snippet,contentDetails',
-          playlistId,
-          maxResults: 50,
-          pageToken: nextPageToken || undefined,
-          key: YT_API_KEY,
-        },
+    // Try JioSaavn playlist
+    try {
+      const resp = await axios.get(`${JIOSAAVN_API}/playlists`, {
+        params: { id: playlistId },
+        timeout: 10000,
       });
 
-      allItems.push(...itemsResp.data.items);
-      nextPageToken = itemsResp.data.nextPageToken;
-    } while (nextPageToken);
+      const plData = resp.data?.data || resp.data;
+      if (plData && plData.songs && plData.songs.length > 0) {
+        const tracks = plData.songs.map(mapJioSaavnSongToTrack);
+        const images = (plData.image || []).map((img) => ({
+          url: img.url || img.link || '',
+          width: img.quality === '500x500' ? 500 : 150,
+          height: img.quality === '500x500' ? 500 : 150,
+        }));
 
-    // Get video durations for all items
-    const videoIds = allItems
-      .map((item) => item.snippet?.resourceId?.videoId)
-      .filter(Boolean);
+        const result = {
+          playlist: {
+            id: playlistId,
+            name: plData.name || '',
+            description: plData.description || '',
+            collaborative: false,
+            public: true,
+            snapshot_id: '',
+            href: '',
+            type: 'playlist',
+            uri: `jiosaavn:playlist:${playlistId}`,
+            external_urls: { spotify: '' },
+            followers: { href: '', total: plData.followerCount || 0 },
+            images: images.length > 0 ? images : [{ url: '', width: 0, height: 0 }],
+            owner: {
+              id: 'jiosaavn',
+              display_name: plData.subtitle || 'JioSaavn',
+              type: 'user',
+            },
+            tracks: { href: '', total: tracks.length },
+          },
+          tracks: tracks.map((track) => ({
+            added_at: new Date().toISOString(),
+            added_by: { id: 'jiosaavn', display_name: 'JioSaavn', type: 'user' },
+            is_local: false,
+            primary_color: '',
+            track,
+            saved: false,
+          })),
+        };
 
-    const tracks = [];
-    // Fetch details in batches of 50
-    for (let i = 0; i < videoIds.length; i += 50) {
-      const batch = videoIds.slice(i, i + 50);
-      const detailsResp = await axios.get(`${YT_API_BASE}/videos`, {
-        params: {
-          part: 'snippet,contentDetails',
-          id: batch.join(','),
-          key: YT_API_KEY,
-        },
-      });
-      tracks.push(...detailsResp.data.items.map(mapVideoToTrack));
+        setCached(cacheKey, result);
+        return res.json(result);
+      }
+    } catch (e) {
+      console.warn('JioSaavn playlist failed:', e.message);
     }
 
-    const pSnippet = playlistData.snippet || {};
-    const thumbnail =
-      pSnippet.thumbnails?.high?.url ||
-      pSnippet.thumbnails?.medium?.url ||
-      pSnippet.thumbnails?.default?.url ||
-      '';
-
-    const result = {
-      playlist: {
-        id: playlistId,
-        name: pSnippet.title || '',
-        description: pSnippet.description || '',
-        collaborative: false,
-        public: true,
-        snapshot_id: '',
-        href: '',
-        type: 'playlist',
-        uri: `youtube:playlist:${playlistId}`,
-        external_urls: { spotify: '' },
-        followers: { href: '', total: 0 },
-        images: [{ url: thumbnail, width: 480, height: 360 }],
-        owner: {
-          id: pSnippet.channelId || '',
-          display_name: pSnippet.channelTitle || '',
-          type: 'user',
-        },
-        tracks: { href: '', total: tracks.length },
-      },
-      tracks: tracks.map((track, index) => ({
-        added_at: allItems[index]?.snippet?.publishedAt || new Date().toISOString(),
-        added_by: {
-          id: pSnippet.channelId || '',
-          display_name: pSnippet.channelTitle || '',
-          type: 'user',
-        },
-        is_local: false,
-        primary_color: '',
-        track,
-        saved: false,
-      })),
-    };
-
-    setCached(cacheKey, result);
-    res.json(result);
+    res.status(404).json({ error: 'Playlist not found' });
   } catch (err) {
-    console.error('Playlist error:', err.response?.data || err.message);
+    console.error('Playlist error:', err.message);
     res.status(500).json({ error: 'Failed to fetch playlist' });
   }
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/trending
-// ---------------------------------------------------------------------------
-app.get('/api/trending', async (req, res) => {
-  try {
-    const { maxResults = 20 } = req.query;
-    const cacheKey = `trending:${maxResults}`;
-    const cached = getCached(cacheKey);
-    if (cached) return res.json(cached);
-
-    const resp = await axios.get(`${YT_API_BASE}/videos`, {
-      params: {
-        part: 'snippet,contentDetails',
-        chart: 'mostPopular',
-        videoCategoryId: '10',
-        regionCode: 'IN',
-        maxResults: Number(maxResults),
-        key: YT_API_KEY,
-      },
-    });
-
-    const result = resp.data.items.map(mapVideoToTrack);
-    setCached(cacheKey, result);
-    res.json(result);
-  } catch (err) {
-    console.error('Trending error:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Failed to fetch trending' });
-  }
-});
-
-// ---------------------------------------------------------------------------
-// GET /api/channel/:channelId
+// GET /api/channel/:channelId (artist)
 // ---------------------------------------------------------------------------
 app.get('/api/channel/:channelId', async (req, res) => {
   try {
@@ -493,75 +505,658 @@ app.get('/api/channel/:channelId', async (req, res) => {
     const cached = getCached(cacheKey);
     if (cached) return res.json(cached);
 
-    const [channelResp, videosResp] = await Promise.all([
-      axios.get(`${YT_API_BASE}/channels`, {
-        params: {
-          part: 'snippet,statistics,brandingSettings',
-          id: channelId,
-          key: YT_API_KEY,
-        },
-      }),
-      axios.get(`${YT_API_BASE}/search`, {
-        params: {
-          part: 'snippet',
-          channelId,
-          type: 'video',
-          order: 'viewCount',
-          maxResults: 20,
-          key: YT_API_KEY,
-        },
-      }),
-    ]);
-
-    const channel = channelResp.data.items?.[0];
-    if (!channel) return res.status(404).json({ error: 'Channel not found' });
-
-    const cSnippet = channel.snippet || {};
-    const stats = channel.statistics || {};
-    const thumbnail =
-      cSnippet.thumbnails?.high?.url ||
-      cSnippet.thumbnails?.medium?.url ||
-      cSnippet.thumbnails?.default?.url ||
-      '';
-
-    // Get video details for duration
-    const videoIds = videosResp.data.items
-      .map((item) => item.id.videoId)
-      .filter(Boolean);
-
-    let topTracks = [];
-    if (videoIds.length > 0) {
-      const detailsResp = await axios.get(`${YT_API_BASE}/videos`, {
-        params: {
-          part: 'snippet,contentDetails',
-          id: videoIds.join(','),
-          key: YT_API_KEY,
-        },
+    // Try JioSaavn artist
+    try {
+      const resp = await axios.get(`${JIOSAAVN_API}/artists/${channelId}`, {
+        timeout: 8000,
       });
-      topTracks = detailsResp.data.items.map(mapVideoToTrack);
+
+      const artistData = resp.data?.data || resp.data;
+      if (artistData && artistData.name) {
+        const images = (artistData.image || []).map((img) => ({
+          url: img.url || img.link || '',
+          width: img.quality === '500x500' ? 500 : 150,
+          height: img.quality === '500x500' ? 500 : 150,
+        }));
+
+        const topSongs = (artistData.topSongs || []).map(mapJioSaavnSongToTrack);
+
+        const result = {
+          artist: {
+            id: channelId,
+            name: artistData.name || '',
+            type: 'artist',
+            href: '',
+            uri: `jiosaavn:artist:${channelId}`,
+            external_urls: { spotify: '' },
+            followers: { href: '', total: artistData.followerCount || 0 },
+            genres: [],
+            images: images.length > 0 ? images : [{ url: '', width: 0, height: 0 }],
+            popularity: 0,
+          },
+          topTracks: topSongs,
+        };
+
+        setCached(cacheKey, result);
+        return res.json(result);
+      }
+    } catch (e) {
+      console.warn('JioSaavn artist failed:', e.message);
     }
 
+    // Fallback: youtube-sr search for artist content
+    try {
+      const videos = await YouTube.search(channelId + ' songs', {
+        type: 'video',
+        limit: 20,
+      });
+
+      const topTracks = videos.map(mapYouTubeSrVideoToTrack);
+
+      const result = {
+        artist: {
+          id: channelId,
+          name: channelId,
+          type: 'artist',
+          href: '',
+          uri: `youtube:artist:${channelId}`,
+          external_urls: { spotify: '' },
+          followers: { href: '', total: 0 },
+          genres: [],
+          images: topTracks[0]?.album?.images || [{ url: '', width: 0, height: 0 }],
+          popularity: 0,
+        },
+        topTracks,
+      };
+
+      setCached(cacheKey, result);
+      res.json(result);
+    } catch (e) {
+      console.error('youtube-sr artist fallback failed:', e.message);
+      res.status(404).json({ error: 'Artist not found' });
+    }
+  } catch (err) {
+    console.error('Channel error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch channel' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/suggestions/:songId — related songs from JioSaavn
+// ---------------------------------------------------------------------------
+app.get('/api/suggestions/:songId', async (req, res) => {
+  try {
+    const { songId } = req.params;
+    const cacheKey = `suggestions:${songId}`;
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
+
+    try {
+      const resp = await axios.get(`${JIOSAAVN_API}/songs/${songId}/suggestions`, {
+        timeout: 8000,
+      });
+      const songs = resp.data?.data || resp.data || [];
+      const result = (Array.isArray(songs) ? songs : []).map(mapJioSaavnSongToTrack);
+      setCached(cacheKey, result);
+      return res.json(result);
+    } catch (e) {
+      console.warn('JioSaavn suggestions failed:', e.message);
+    }
+
+    res.json([]);
+  } catch (err) {
+    console.error('Suggestions error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch suggestions' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/song-url/:songId — get best quality download URL from JioSaavn
+// ---------------------------------------------------------------------------
+app.get('/api/song-url/:songId', async (req, res) => {
+  try {
+    const { songId } = req.params;
+    const cacheKey = `songurl:${songId}`;
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
+
+    const resp = await axios.get(`${JIOSAAVN_API}/songs/${songId}`, { timeout: 8000 });
+    const songs = resp.data?.data || [resp.data];
+    const song = songs[0];
+
+    if (!song || !song.downloadUrl || song.downloadUrl.length === 0) {
+      return res.status(404).json({ error: 'No download URL available' });
+    }
+
+    // Pick the best quality (last entry is typically highest quality — 320kbps)
+    const urls = song.downloadUrl;
+    const best = urls[urls.length - 1];
+
     const result = {
-      artist: {
-        id: channelId,
-        name: cSnippet.title || '',
-        type: 'artist',
-        href: '',
-        uri: `youtube:artist:${channelId}`,
-        external_urls: { spotify: '' },
-        followers: { href: '', total: parseInt(stats.subscriberCount || '0', 10) },
-        genres: [],
-        images: [{ url: thumbnail, width: 800, height: 800 }],
-        popularity: 0,
-      },
-      topTracks,
+      url: best.url || best.link || '',
+      quality: best.quality || '320kbps',
+      allQualities: urls,
     };
 
     setCached(cacheKey, result);
     res.json(result);
   } catch (err) {
-    console.error('Channel error:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Failed to fetch channel' });
+    console.error('Song URL error:', err.message);
+    res.status(500).json({ error: 'Failed to get song URL' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/artist/:id — full artist details
+// ---------------------------------------------------------------------------
+app.get('/api/artist/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const cacheKey = `artist:${id}`;
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
+
+    try {
+      const resp = await axios.get(`${JIOSAAVN_API}/artists/${id}`, { timeout: 8000 });
+      const a = resp.data?.data || resp.data;
+      if (a && a.name) {
+        const images = (a.image || []).map((img) => ({
+          url: img.url || img.link || '',
+          width: img.quality === '500x500' ? 500 : img.quality === '150x150' ? 150 : 50,
+          height: img.quality === '500x500' ? 500 : img.quality === '150x150' ? 150 : 50,
+        }));
+        const result = {
+          id: a.id || id,
+          name: a.name || '',
+          type: 'artist',
+          href: '',
+          uri: `jiosaavn:artist:${a.id || id}`,
+          external_urls: { spotify: '' },
+          followers: { href: '', total: a.followerCount || a.fanCount || 0 },
+          genres: [],
+          images: images.length > 0 ? images : [{ url: '', width: 0, height: 0 }],
+          popularity: 0,
+          bio: a.bio || a.dominantLanguage || '',
+        };
+        setCached(cacheKey, result);
+        return res.json(result);
+      }
+    } catch (e) {
+      console.warn('JioSaavn artist detail failed:', e.message);
+    }
+
+    // Fallback: search YouTube for the artist
+    try {
+      const videos = await YouTube.search(id + ' official', { type: 'video', limit: 1 });
+      const v = videos[0];
+      const result = {
+        id,
+        name: v?.channel?.name || id,
+        type: 'artist',
+        href: '',
+        uri: `youtube:artist:${id}`,
+        external_urls: { spotify: '' },
+        followers: { href: '', total: 0 },
+        genres: [],
+        images: v?.thumbnail ? [{ url: v.thumbnail.url, width: 480, height: 360 }] : [],
+        popularity: 0,
+      };
+      setCached(cacheKey, result);
+      return res.json(result);
+    } catch (e) {
+      console.warn('YouTube artist fallback failed:', e.message);
+    }
+
+    res.status(404).json({ error: 'Artist not found' });
+  } catch (err) {
+    console.error('Artist detail error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch artist' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/artist/:id/top-tracks — artist top tracks
+// ---------------------------------------------------------------------------
+app.get('/api/artist/:id/top-tracks', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const cacheKey = `artist-top:${id}`;
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
+
+    try {
+      const resp = await axios.get(`${JIOSAAVN_API}/artists/${id}`, { timeout: 8000 });
+      const a = resp.data?.data || resp.data;
+      const tracks = (a?.topSongs || []).map(mapJioSaavnSongToTrack);
+      setCached(cacheKey, { tracks });
+      return res.json({ tracks });
+    } catch (e) {
+      console.warn('JioSaavn artist top tracks failed:', e.message);
+    }
+
+    // Fallback
+    try {
+      const videos = await YouTube.search(id + ' songs', { type: 'video', limit: 20 });
+      const tracks = videos.map(mapYouTubeSrVideoToTrack);
+      setCached(cacheKey, { tracks });
+      return res.json({ tracks });
+    } catch (e) {
+      console.warn('YouTube top tracks fallback failed:', e.message);
+    }
+
+    res.json({ tracks: [] });
+  } catch (err) {
+    console.error('Artist top tracks error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch top tracks' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/artist/:id/albums — artist albums/singles/compilations
+// ---------------------------------------------------------------------------
+app.get('/api/artist/:id/albums', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const cacheKey = `artist-albums:${id}`;
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
+
+    try {
+      const resp = await axios.get(`${JIOSAAVN_API}/artists/${id}`, { timeout: 8000 });
+      const a = resp.data?.data || resp.data;
+
+      const mapAlbum = (alb) => {
+        const imgs = (alb.image || []).map((img) => ({
+          url: img.url || img.link || '',
+          width: img.quality === '500x500' ? 500 : 150,
+          height: img.quality === '500x500' ? 500 : 150,
+        }));
+        return {
+          id: alb.id || '',
+          name: alb.name || alb.title || '',
+          album_type: alb.type === 'single' ? 'single' : 'album',
+          artists: [{ id: a.id || id, name: a.name || '', type: 'artist' }],
+          available_markets: [],
+          external_urls: { spotify: '' },
+          href: '',
+          images: imgs.length > 0 ? imgs : [{ url: '', width: 0, height: 0 }],
+          release_date: alb.year || alb.releaseDate || '',
+          release_date_precision: 'year',
+          total_tracks: alb.songCount || 1,
+          type: 'album',
+          uri: `jiosaavn:album:${alb.id || ''}`,
+        };
+      };
+
+      const topAlbums = (a?.topAlbums || []).map(mapAlbum);
+      const singles = (a?.singles || []).map(mapAlbum);
+
+      const result = {
+        albums: topAlbums,
+        singles,
+        appearsOn: [],
+        compilations: [],
+      };
+
+      setCached(cacheKey, result);
+      return res.json(result);
+    } catch (e) {
+      console.warn('JioSaavn artist albums failed:', e.message);
+    }
+
+    res.json({ albums: [], singles: [], appearsOn: [], compilations: [] });
+  } catch (err) {
+    console.error('Artist albums error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch artist albums' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/artist/:id/related — similar artists
+// ---------------------------------------------------------------------------
+app.get('/api/artist/:id/related', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const cacheKey = `artist-related:${id}`;
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
+
+    try {
+      const resp = await axios.get(`${JIOSAAVN_API}/artists/${id}`, { timeout: 8000 });
+      const a = resp.data?.data || resp.data;
+      const similar = (a?.similarArtists || []).map((sa) => {
+        const imgs = (sa.image || []).map((img) => ({
+          url: img.url || img.link || '',
+          width: img.quality === '500x500' ? 500 : 150,
+          height: img.quality === '500x500' ? 500 : 150,
+        }));
+        return {
+          id: sa.id || '',
+          name: sa.name || '',
+          type: 'artist',
+          href: '',
+          uri: `jiosaavn:artist:${sa.id || ''}`,
+          external_urls: { spotify: '' },
+          followers: { href: '', total: 0 },
+          genres: [],
+          images: imgs.length > 0 ? imgs : [{ url: '', width: 0, height: 0 }],
+          popularity: 0,
+        };
+      });
+      setCached(cacheKey, { artists: similar });
+      return res.json({ artists: similar });
+    } catch (e) {
+      console.warn('JioSaavn similar artists failed:', e.message);
+    }
+
+    res.json({ artists: [] });
+  } catch (err) {
+    console.error('Related artists error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch related artists' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/album/:id — album details
+// ---------------------------------------------------------------------------
+app.get('/api/album/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const cacheKey = `album:${id}`;
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
+
+    try {
+      const resp = await axios.get(`${JIOSAAVN_API}/albums`, {
+        params: { id },
+        timeout: 8000,
+      });
+      const alb = resp.data?.data || resp.data;
+      if (alb && (alb.name || alb.title)) {
+        const images = (alb.image || []).map((img) => ({
+          url: img.url || img.link || '',
+          width: img.quality === '500x500' ? 500 : img.quality === '150x150' ? 150 : 50,
+          height: img.quality === '500x500' ? 500 : img.quality === '150x150' ? 150 : 50,
+        }));
+        const artists = (alb.artists?.primary || alb.artists?.all || []).map((ar) => ({
+          id: ar.id || '',
+          name: ar.name || '',
+          type: 'artist',
+          href: '',
+          uri: `jiosaavn:artist:${ar.id || ''}`,
+          external_urls: { spotify: '' },
+        }));
+        const tracks = (alb.songs || []).map(mapJioSaavnSongToTrack);
+
+        const result = {
+          id: alb.id || id,
+          name: alb.name || alb.title || '',
+          album_type: alb.type || 'album',
+          artists,
+          available_markets: [],
+          copyrights: [],
+          external_ids: {},
+          external_urls: { spotify: '' },
+          genres: [],
+          href: '',
+          images: images.length > 0 ? images : [{ url: '', width: 0, height: 0 }],
+          label: alb.label || '',
+          popularity: 0,
+          release_date: alb.year || alb.releaseDate || '',
+          release_date_precision: 'year',
+          total_tracks: tracks.length,
+          type: 'album',
+          uri: `jiosaavn:album:${alb.id || id}`,
+          tracks: {
+            href: '',
+            items: tracks,
+            limit: tracks.length,
+            offset: 0,
+            total: tracks.length,
+            next: null,
+            previous: null,
+          },
+        };
+
+        setCached(cacheKey, result);
+        return res.json(result);
+      }
+    } catch (e) {
+      console.warn('JioSaavn album fetch failed:', e.message);
+    }
+
+    res.status(404).json({ error: 'Album not found' });
+  } catch (err) {
+    console.error('Album detail error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch album' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/album/:id/tracks — album tracks
+// ---------------------------------------------------------------------------
+app.get('/api/album/:id/tracks', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const cacheKey = `album-tracks:${id}`;
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
+
+    try {
+      const resp = await axios.get(`${JIOSAAVN_API}/albums`, {
+        params: { id },
+        timeout: 8000,
+      });
+      const alb = resp.data?.data || resp.data;
+      const tracks = (alb?.songs || []).map(mapJioSaavnSongToTrack);
+      const result = {
+        href: '',
+        items: tracks,
+        limit: tracks.length,
+        offset: 0,
+        total: tracks.length,
+        next: null,
+        previous: null,
+      };
+      setCached(cacheKey, result);
+      return res.json(result);
+    } catch (e) {
+      console.warn('JioSaavn album tracks failed:', e.message);
+    }
+
+    res.json({ href: '', items: [], limit: 0, offset: 0, total: 0, next: null, previous: null });
+  } catch (err) {
+    console.error('Album tracks error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch album tracks' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/new-releases — new album releases (JioSaavn trending albums)
+// ---------------------------------------------------------------------------
+app.get('/api/new-releases', async (req, res) => {
+  try {
+    const { limit = 20 } = req.query;
+    const cacheKey = `new-releases:${limit}`;
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
+
+    try {
+      const resp = await axios.get(`${JIOSAAVN_API}/search/albums`, {
+        params: { query: 'new releases 2026', limit: Number(limit) },
+        timeout: 8000,
+      });
+      const albums = (resp.data?.data?.results || resp.data?.results || []).map((alb) => {
+        const images = (alb.image || []).map((img) => ({
+          url: img.url || img.link || '',
+          width: img.quality === '500x500' ? 500 : 150,
+          height: img.quality === '500x500' ? 500 : 150,
+        }));
+        const artists = (alb.artists?.primary || alb.artists?.all || []).map((ar) => ({
+          id: ar.id || '', name: ar.name || '', type: 'artist',
+        }));
+        return {
+          id: alb.id || '',
+          name: alb.name || alb.title || '',
+          album_type: 'album',
+          artists,
+          images: images.length > 0 ? images : [{ url: '', width: 0, height: 0 }],
+          release_date: alb.year || '',
+          total_tracks: alb.songCount || 0,
+          type: 'album',
+          uri: `jiosaavn:album:${alb.id || ''}`,
+          external_urls: { spotify: '' },
+          href: '',
+        };
+      });
+      const result = { albums: { items: albums, total: albums.length } };
+      setCached(cacheKey, result);
+      return res.json(result);
+    } catch (e) {
+      console.warn('JioSaavn new releases failed:', e.message);
+    }
+
+    res.json({ albums: { items: [], total: 0 } });
+  } catch (err) {
+    console.error('New releases error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch new releases' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/featured-playlists — featured/editorial playlists
+// ---------------------------------------------------------------------------
+app.get('/api/featured-playlists', async (req, res) => {
+  try {
+    const { limit = 20 } = req.query;
+    const cacheKey = `featured-playlists:${limit}`;
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
+
+    try {
+      const resp = await axios.get(`${JIOSAAVN_API}/search/playlists`, {
+        params: { query: 'top playlists hindi punjabi', limit: Number(limit) },
+        timeout: 8000,
+      });
+      const playlists = (resp.data?.data?.results || resp.data?.results || []).map((pl) => {
+        const images = (pl.image || []).map((img) => ({
+          url: img.url || img.link || '',
+          width: img.quality === '500x500' ? 500 : 150,
+          height: img.quality === '500x500' ? 500 : 150,
+        }));
+        return {
+          id: pl.id || '',
+          name: pl.name || pl.title || '',
+          description: pl.description || '',
+          collaborative: false,
+          public: true,
+          snapshot_id: '',
+          href: '',
+          type: 'playlist',
+          uri: `jiosaavn:playlist:${pl.id || ''}`,
+          external_urls: { spotify: '' },
+          followers: { href: '', total: pl.followerCount || 0 },
+          images: images.length > 0 ? images : [{ url: '', width: 0, height: 0 }],
+          owner: { id: 'jiosaavn', display_name: pl.subtitle || 'JioSaavn', type: 'user' },
+          tracks: { href: '', total: pl.songCount || 0 },
+        };
+      });
+      const result = { playlists: { items: playlists, total: playlists.length } };
+      setCached(cacheKey, result);
+      return res.json(result);
+    } catch (e) {
+      console.warn('JioSaavn featured playlists failed:', e.message);
+    }
+
+    res.json({ playlists: { items: [], total: 0 } });
+  } catch (err) {
+    console.error('Featured playlists error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch featured playlists' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/category/:id/playlists — playlists for a genre category
+// ---------------------------------------------------------------------------
+app.get('/api/category/:id/playlists', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { limit = 20 } = req.query;
+    const cacheKey = `cat-playlists:${id}:${limit}`;
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
+
+    try {
+      const resp = await axios.get(`${JIOSAAVN_API}/search/playlists`, {
+        params: { query: `${id} songs playlist`, limit: Number(limit) },
+        timeout: 8000,
+      });
+      const playlists = (resp.data?.data?.results || resp.data?.results || []).map((pl) => {
+        const images = (pl.image || []).map((img) => ({
+          url: img.url || img.link || '',
+          width: img.quality === '500x500' ? 500 : 150,
+          height: img.quality === '500x500' ? 500 : 150,
+        }));
+        return {
+          id: pl.id || '',
+          name: pl.name || pl.title || '',
+          description: pl.description || '',
+          collaborative: false,
+          public: true,
+          snapshot_id: '',
+          href: '',
+          type: 'playlist',
+          uri: `jiosaavn:playlist:${pl.id || ''}`,
+          external_urls: { spotify: '' },
+          followers: { href: '', total: pl.followerCount || 0 },
+          images: images.length > 0 ? images : [{ url: '', width: 0, height: 0 }],
+          owner: { id: 'jiosaavn', display_name: pl.subtitle || 'JioSaavn', type: 'user' },
+          tracks: { href: '', total: pl.songCount || 0 },
+        };
+      });
+      const result = { playlists: { items: playlists, total: playlists.length } };
+      setCached(cacheKey, result);
+      return res.json(result);
+    } catch (e) {
+      console.warn('JioSaavn category playlists failed:', e.message);
+    }
+
+    res.json({ playlists: { items: [], total: 0 } });
+  } catch (err) {
+    console.error('Category playlists error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch category playlists' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/recommendations — song recommendations based on seed tracks
+// ---------------------------------------------------------------------------
+app.get('/api/recommendations', async (req, res) => {
+  try {
+    const { seed_tracks = '', limit = 10 } = req.query;
+    const seeds = String(seed_tracks).split(',').filter(Boolean);
+    if (seeds.length === 0) return res.json({ tracks: [] });
+
+    const cacheKey = `recs:${seeds.join(',')}:${limit}`;
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
+
+    // Use suggestions for the first seed track
+    try {
+      const resp = await axios.get(`${JIOSAAVN_API}/songs/${seeds[0]}/suggestions`, { timeout: 8000 });
+      const songs = resp.data?.data || resp.data || [];
+      const tracks = (Array.isArray(songs) ? songs : []).slice(0, Number(limit)).map(mapJioSaavnSongToTrack);
+      const result = { tracks };
+      setCached(cacheKey, result);
+      return res.json(result);
+    } catch (e) {
+      console.warn('JioSaavn recommendations failed:', e.message);
+    }
+
+    res.json({ tracks: [] });
+  } catch (err) {
+    console.error('Recommendations error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch recommendations' });
   }
 });
 
@@ -590,7 +1185,7 @@ app.get('/api/categories', (_req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/audio/:videoId — proxy the audio stream to avoid CORS issues
+// GET /api/audio/:videoId — proxy the audio stream (YouTube fallback)
 // ---------------------------------------------------------------------------
 app.get('/api/audio/:videoId', async (req, res) => {
   try {
@@ -652,102 +1247,6 @@ app.get('/api/audio/:videoId', async (req, res) => {
   } catch (err) {
     console.error('Audio proxy error:', err.message);
     res.status(502).json({ error: 'Failed to stream audio' });
-  }
-});
-
-// ---------------------------------------------------------------------------
-// GET /api/spotify/search?q=song+name+artist — search Spotify for a track
-// Returns preview_url for fallback playback
-// ---------------------------------------------------------------------------
-app.get('/api/spotify/search', async (req, res) => {
-  try {
-    const { q, limit = 5 } = req.query;
-    if (!q) return res.status(400).json({ error: 'Missing q' });
-
-    const token = await getSpotifyToken();
-    if (!token) return res.status(503).json({ error: 'Spotify auth failed' });
-
-    const cacheKey = `sp_search:${q}:${limit}`;
-    const cached = getCached(cacheKey);
-    if (cached) return res.json(cached);
-
-    const resp = await axios.get('https://api.spotify.com/v1/search', {
-      params: { q, type: 'track', market: 'IN', limit: Number(limit) },
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    const tracks = (resp.data.tracks?.items || []).map((t) => ({
-      id: t.id,
-      name: t.name,
-      uri: t.uri,
-      preview_url: t.preview_url,
-      duration_ms: t.duration_ms,
-      artists: t.artists.map((a) => ({ id: a.id, name: a.name, uri: a.uri })),
-      album: {
-        id: t.album.id,
-        name: t.album.name,
-        images: t.album.images,
-        uri: t.album.uri,
-      },
-    }));
-
-    setCached(cacheKey, tracks, 10 * 60 * 1000);
-    res.json(tracks);
-  } catch (err) {
-    console.error('Spotify search error:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Spotify search failed' });
-  }
-});
-
-// ---------------------------------------------------------------------------
-// GET /api/spotify/token — get Spotify auth token for Web Playback SDK
-// (Client Credentials — note: Web Playback SDK needs user auth, this is for search only)
-// ---------------------------------------------------------------------------
-app.get('/api/spotify/token', async (req, res) => {
-  try {
-    const token = await getSpotifyToken();
-    if (!token) return res.status(503).json({ error: 'Failed to get token' });
-    res.json({ access_token: token });
-  } catch (err) {
-    res.status(500).json({ error: 'Token fetch failed' });
-  }
-});
-
-// ---------------------------------------------------------------------------
-// GET /api/spotify/preview/:trackId — proxy Spotify 30s preview to avoid CORS
-// ---------------------------------------------------------------------------
-app.get('/api/spotify/preview/:trackId', async (req, res) => {
-  try {
-    const { trackId } = req.params;
-    const token = await getSpotifyToken();
-    if (!token) return res.status(503).json({ error: 'Spotify auth failed' });
-
-    // Get track details for preview_url
-    const cacheKey = `sp_preview:${trackId}`;
-    let previewUrl = getCached(cacheKey);
-
-    if (!previewUrl) {
-      const resp = await axios.get(`https://api.spotify.com/v1/tracks/${trackId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-        params: { market: 'IN' },
-      });
-      previewUrl = resp.data.preview_url;
-      if (previewUrl) setCached(cacheKey, previewUrl, 30 * 60 * 1000);
-    }
-
-    if (!previewUrl) {
-      return res.status(404).json({ error: 'No preview available for this track' });
-    }
-
-    // Proxy the preview audio
-    const audioResp = await axios.get(previewUrl, { responseType: 'stream' });
-    res.setHeader('Content-Type', audioResp.headers['content-type'] || 'audio/mpeg');
-    if (audioResp.headers['content-length']) res.setHeader('Content-Length', audioResp.headers['content-length']);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    audioResp.data.pipe(res);
-  } catch (err) {
-    console.error('Spotify preview error:', err.message);
-    res.status(502).json({ error: 'Preview fetch failed' });
   }
 });
 

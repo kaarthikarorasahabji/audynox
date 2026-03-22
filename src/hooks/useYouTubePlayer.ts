@@ -1,5 +1,5 @@
 import { useRef, useCallback, useState, useEffect } from 'react';
-import { getStreamUrl } from '../services/youtubeApi';
+import { getStreamUrl, getSongUrl } from '../services/youtubeApi';
 import axios from '../backendAxios';
 import type { Track } from '../interfaces/track';
 
@@ -225,46 +225,70 @@ export function useYouTubePlayer(onStateChange?: (state: any) => void) {
         audio.load();
       };
 
-      // Helper: try Spotify preview as fallback
-      const trySpotifyFallback = async () => {
+      // Helper: try JioSaavn search as fallback
+      const tryJioSaavnFallback = async () => {
         try {
           const q = `${track.name} ${track.artists?.[0]?.name || ''}`.trim();
-          const resp = await axios.get('/api/spotify/search', { params: { q, limit: 1 } });
-          const spTrack = resp.data?.[0];
-          if (spTrack?.id) {
-            console.log('Falling back to Spotify preview for:', spTrack.name);
-            audio.src = `${backendUrl}/api/spotify/preview/${spTrack.id}`;
-            beginPlayback(spTrack.duration_ms || track.duration_ms || 30000);
+          const resp = await axios.get('/api/search', { params: { q, maxResults: 1 } });
+          const jsTrack = resp.data?.[0];
+          if (jsTrack?.downloadUrl && jsTrack.downloadUrl.length > 0) {
+            const best = jsTrack.downloadUrl[jsTrack.downloadUrl.length - 1];
+            console.log('[Audynox] Falling back to JioSaavn for:', jsTrack.name);
+            audio.src = best.url || best.link;
+            beginPlayback(jsTrack.duration_ms || track.duration_ms || 0);
             return true;
           }
         } catch (e) {
-          console.error('Spotify fallback failed:', e);
+          console.error('[Audynox] JioSaavn fallback failed:', e);
         }
         return false;
       };
 
       try {
-        // Primary: YouTube audio proxy
-        audio.src = `${backendUrl}/api/audio/${videoId}`;
+        // Check if track has JioSaavn downloadUrl (direct MP3)
+        const trackDownloadUrl = (track as any).downloadUrl;
+        if (trackDownloadUrl && Array.isArray(trackDownloadUrl) && trackDownloadUrl.length > 0) {
+          // Use JioSaavn direct URL — pick best quality (last entry = 320kbps)
+          const best = trackDownloadUrl[trackDownloadUrl.length - 1];
+          const directUrl = best.url || best.link;
+          console.log('[Audynox] Playing via JioSaavn direct URL:', track.name);
+          audio.src = directUrl;
 
-        // Fetch metadata for duration
-        const streamData = await getStreamUrl(videoId).catch(() => null);
-        const actualDuration = streamData?.duration || track.duration_ms || 0;
+          audio.onerror = async () => {
+            console.warn('[Audynox] JioSaavn direct URL failed, trying YouTube fallback...');
+            // Try YouTube fallback if we have a videoId
+            if (videoId && videoId !== track.id) {
+              audio.src = `${backendUrl}/api/audio/${videoId}`;
+              beginPlayback(track.duration_ms || 0);
+            } else {
+              setState((prev) => ({ ...prev, isLoading: false, isPlaying: false }));
+              nextTrackFn();
+            }
+          };
 
-        audio.onerror = async () => {
-          console.warn('YouTube playback failed, trying Spotify fallback...');
-          const ok = await trySpotifyFallback();
-          if (!ok) {
-            setState((prev) => ({ ...prev, isLoading: false, isPlaying: false }));
-            nextTrackFn();
-          }
-        };
+          beginPlayback(track.duration_ms || 0);
+        } else {
+          // No JioSaavn URL — use YouTube audio proxy
+          audio.src = `${backendUrl}/api/audio/${videoId}`;
 
-        beginPlayback(actualDuration);
+          // Fetch metadata for duration
+          const streamData = await getStreamUrl(videoId).catch(() => null);
+          const actualDuration = streamData?.duration || track.duration_ms || 0;
+
+          audio.onerror = async () => {
+            console.warn('[Audynox] YouTube playback failed, trying JioSaavn fallback...');
+            const ok = await tryJioSaavnFallback();
+            if (!ok) {
+              setState((prev) => ({ ...prev, isLoading: false, isPlaying: false }));
+              nextTrackFn();
+            }
+          };
+
+          beginPlayback(actualDuration);
+        }
       } catch (err) {
-        console.error('Failed to get stream URL:', err);
-        // Try Spotify fallback
-        const ok = await trySpotifyFallback();
+        console.error('[Audynox] Failed to start playback:', err);
+        const ok = await tryJioSaavnFallback();
         if (!ok) {
           setState((prev) => ({ ...prev, isLoading: false }));
           nextTrackFn();
@@ -279,10 +303,20 @@ export function useYouTubePlayer(onStateChange?: (state: any) => void) {
     const current = currentTrackRef.current;
     if (!current) return [];
     try {
-      const q = `${current.artists?.[0]?.name || ''} music`.trim();
-      console.log('[Audynox] Autoplay: fetching related tracks for:', q);
-      const resp = await axios.get('/api/search', { params: { q, maxResults: 10 } });
-      const tracks = resp.data as Track[];
+      // Try JioSaavn suggestions first
+      const songId = current.id;
+      console.log('[Audynox] Autoplay: fetching suggestions for:', songId);
+      const resp = await axios.get(`/api/suggestions/${songId}`);
+      let tracks = resp.data as Track[];
+
+      // If no suggestions, fall back to search
+      if (!tracks || tracks.length === 0) {
+        const q = `${current.artists?.[0]?.name || ''} music`.trim();
+        console.log('[Audynox] Autoplay: no suggestions, searching for:', q);
+        const searchResp = await axios.get('/api/search', { params: { q, maxResults: 10 } });
+        tracks = searchResp.data as Track[];
+      }
+
       // Filter out tracks already in queue
       const existingIds = new Set(queueRef.current.map((t) => t.id));
       return tracks.filter((t) => !existingIds.has(t.id));

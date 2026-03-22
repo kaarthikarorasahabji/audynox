@@ -43,9 +43,10 @@ export function registerTrack(track: Track) {
   if (track.uri) {
     tracksByUri.set(track.uri, track);
   }
-  // Also index by id
+  // Also index by id — support both youtube and jiosaavn URIs
   if (track.id) {
     tracksByUri.set(`youtube:track:${track.id}`, track);
+    tracksByUri.set(`jiosaavn:track:${track.id}`, track);
     tracksByUri.set(track.id, track);
   }
 }

@@ -1,22 +1,44 @@
-import axios from '../axios';
+import axios from '../backendAxios';
 
 const getPlaylist = async (playlistId: string) => {
-  return axios.get(`/playlists/${playlistId}`);
+  const resp = await axios.get(`/api/playlist/${playlistId}`);
+  // Return playlist in Spotify-compatible shape
+  return { data: resp.data.playlist || resp.data };
 };
 
 const getPlaylistItems = async (
   playlistId: string,
   params: { limit?: number; offset?: number; fields?: string } = { limit: 50 }
 ) => {
-  return axios.get(`/playlists/${playlistId}/tracks`, { params });
+  const resp = await axios.get(`/api/playlist/${playlistId}`);
+  const tracks = resp.data.tracks || [];
+  const offset = params.offset || 0;
+  const limit = params.limit || 50;
+  const sliced = tracks.slice(offset, offset + limit);
+  return {
+    data: {
+      items: sliced,
+      total: tracks.length,
+      limit,
+      offset,
+      next: offset + limit < tracks.length ? 'more' : null,
+      previous: null,
+    },
+  };
 };
 
-const getMyPlaylists = async (params: { limit?: number; offset?: number } = {}) => {
-  return axios.get('/me/playlists', { params });
+const getMyPlaylists = async (_params: { limit?: number; offset?: number } = {}) => {
+  // Local playlists stored in localStorage
+  try {
+    const playlists = JSON.parse(localStorage.getItem('yt_my_playlists') || '[]');
+    return { data: { items: playlists, total: playlists.length } };
+  } catch {
+    return { data: { items: [], total: 0 } };
+  }
 };
 
 const getFeaturedPlaylists = async (params: { limit?: number; locale?: string } = {}) => {
-  return axios.get('/browse/featured-playlists', { params });
+  return axios.get('/api/featured-playlists', { params: { limit: params.limit || 20 } });
 };
 
 const addPlaylistItems = async (
@@ -24,53 +46,86 @@ const addPlaylistItems = async (
   uris: string[],
   _snapshot_id: string
 ) => {
-  return axios.post(`/playlists/${playlistId}/tracks`, { uris });
+  // Local playlist management
+  try {
+    const playlists = JSON.parse(localStorage.getItem('yt_my_playlists') || '[]');
+    const pl = playlists.find((p: any) => p.id === playlistId);
+    if (pl) {
+      pl.trackUris = [...(pl.trackUris || []), ...uris];
+      localStorage.setItem('yt_my_playlists', JSON.stringify(playlists));
+    }
+  } catch {}
+  return { data: { snapshot_id: '' } };
 };
 
 const removePlaylistItems = async (
   playlistId: string,
   uris: string[],
-  snapshot_id: string
+  _snapshot_id: string
 ) => {
-  return axios.delete(`/playlists/${playlistId}/tracks`, {
-    data: { tracks: uris.map((uri) => ({ uri })), snapshot_id },
-  });
+  try {
+    const playlists = JSON.parse(localStorage.getItem('yt_my_playlists') || '[]');
+    const pl = playlists.find((p: any) => p.id === playlistId);
+    if (pl) {
+      pl.trackUris = (pl.trackUris || []).filter((u: string) => !uris.includes(u));
+      localStorage.setItem('yt_my_playlists', JSON.stringify(playlists));
+    }
+  } catch {}
+  return { data: { snapshot_id: '' } };
 };
 
 const reorderPlaylistItems = async (
-  playlistId: string,
+  _playlistId: string,
   _uris: string[],
-  rangeStart: number,
-  insertBefore: number,
-  rangeLength: number,
-  snapshotId: string
+  _rangeStart: number,
+  _insertBefore: number,
+  _rangeLength: number,
+  _snapshotId: string
 ) => {
-  return axios.put(`/playlists/${playlistId}/tracks`, {
-    range_start: rangeStart,
-    insert_before: insertBefore,
-    range_length: rangeLength,
-    snapshot_id: snapshotId,
-  });
+  return { data: { snapshot_id: '' } };
 };
 
 const changePlaylistDetails = async (
-  playlistId: string,
-  data: { name?: string; public?: boolean; collaborative?: boolean; description?: string }
+  _playlistId: string,
+  _data: { name?: string; public?: boolean; collaborative?: boolean; description?: string }
 ) => {
-  return axios.put(`/playlists/${playlistId}`, data);
+  return { data: {} };
 };
 
-const changePlaylistImage = async (playlistId: string, _image: string, content: string) => {
-  return axios.put(`/playlists/${playlistId}/images`, content, {
-    headers: { 'Content-Type': 'image/jpeg' },
-  });
+const changePlaylistImage = async (_playlistId: string, _image: string, _content: string) => {
+  return { data: {} };
 };
 
 const createPlaylist = async (
-  userId: string,
+  _userId: string,
   data: { name: string; public?: boolean; collaborative?: boolean; description?: string }
-) => {
-  return axios.post(`/users/${userId}/playlists`, data);
+): Promise<{ data: any }> => {
+  try {
+    const playlists = JSON.parse(localStorage.getItem('yt_my_playlists') || '[]');
+    const ts = Date.now();
+    const newPlaylist = {
+      id: `local-${ts}`,
+      name: data.name,
+      description: data.description || '',
+      collaborative: data.collaborative || false,
+      public: data.public ?? true,
+      snapshot_id: '',
+      href: '',
+      type: 'playlist' as const,
+      uri: `local:playlist:local-${ts}`,
+      external_urls: { spotify: '' },
+      followers: { href: '', total: 0 },
+      images: [] as any[],
+      owner: { id: 'local-user', display_name: 'You', type: 'user' },
+      tracks: { href: '', total: 0 },
+      trackUris: [] as string[],
+    };
+    playlists.push(newPlaylist);
+    localStorage.setItem('yt_my_playlists', JSON.stringify(playlists));
+    return { data: newPlaylist };
+  } catch {
+    return { data: { id: '', snapshot_id: '' } };
+  }
 };
 
 const getRecommendations = async (params: {
@@ -79,14 +134,20 @@ const getRecommendations = async (params: {
   limit?: number;
   seed_tracks?: string;
 }) => {
-  return axios.get('/recommendations', { params });
+  return axios.get('/api/recommendations', { params });
 };
 
 const getPlaylists = async (
-  userId: string,
-  params: { limit?: number; offset?: number }
+  _userId: string,
+  _params: { limit?: number; offset?: number }
 ) => {
-  return axios.get(`/users/${userId}/playlists`, { params });
+  // Return local playlists for the user
+  try {
+    const playlists = JSON.parse(localStorage.getItem('yt_my_playlists') || '[]');
+    return { data: { items: playlists, total: playlists.length } };
+  } catch {
+    return { data: { items: [], total: 0 } };
+  }
 };
 
 export const playlistService = {

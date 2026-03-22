@@ -112,6 +112,26 @@ export function tracksToPlaylistItems(tracks: Track[]): (PlaylistItem & { saved:
   }));
 }
 
+// ---------------------------------------------------------------------------
+// Suggestions (JioSaavn related songs)
+// ---------------------------------------------------------------------------
+
+export const getSuggestions = async (songId: string): Promise<Track[]> => {
+  const response = await axios.get<Track[]>(`/api/suggestions/${songId}`);
+  return response.data;
+};
+
+// ---------------------------------------------------------------------------
+// Song URL (JioSaavn direct download URL)
+// ---------------------------------------------------------------------------
+
+export const getSongUrl = async (
+  songId: string
+): Promise<{ url: string; quality: string; allQualities: { url: string; quality: string }[] }> => {
+  const response = await axios.get(`/api/song-url/${songId}`);
+  return response.data;
+};
+
 export const youtubeApi = {
   searchTracks,
   getStreamUrl,
@@ -122,4 +142,6 @@ export const youtubeApi = {
   getCategories,
   wrapAsPagination,
   tracksToPlaylistItems,
+  getSuggestions,
+  getSongUrl,
 };
